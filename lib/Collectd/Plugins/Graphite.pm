@@ -209,20 +209,20 @@ sub send_to_graphite {
 }
 
 sub send_to_graphite_tcp {
-     return 0 if length($buff) == 0;
-     my $sock = IO::Socket::INET->new(PeerAddr => $graphite_host,
-                                      PeerPort => $graphite_port,
-                                      Proto    => 'tcp',
-                                      Timeout  => $sock_timeout);
-     unless ($sock) {
-         plugin_log(LOG_ERR, "Graphite.pm: failed to connect to " .
-                             "$graphite_host:$graphite_port : $!");
-         return 0;
-     }
-     print $sock $buff;
-     close($sock);
-     $buff = '';
-     return 1;
+    return 0 if length($buff) == 0;
+    my $sock = IO::Socket::INET->new(PeerAddr => $graphite_host,
+                                     PeerPort => $graphite_port,
+                                     Proto    => 'tcp',
+                                     Timeout  => $sock_timeout);
+    unless ($sock) {
+        plugin_log(LOG_ERR, "Graphite.pm: failed to connect to " .
+                            "$graphite_host:$graphite_port : $!");
+        return 0;
+    }
+    print $sock $buff;
+    close($sock);
+    $buff = '';
+    return 1;
 }
 
 sub send_to_graphite_amqp {
