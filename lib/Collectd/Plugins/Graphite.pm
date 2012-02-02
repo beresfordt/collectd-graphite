@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use IO::Socket;
+use Net::RabbitMQ;
 
 use Collectd qw( :all );
 
@@ -86,12 +87,20 @@ Copyright 2011 Joe Miller.
 
 my $buff = '';
 my $sock_timeout  = 10;
+my $amqp_timeout  = 10;
 
 # config vars.  These can be overridden in collectd.conf
 my $buffer_size   = 8192;
 my $prefix        = 'collectd';
 my $graphite_host = 'localhost';
 my $graphite_port = 2003;
+my $use_amqp      = 0;
+my $amqp_host     = 'localhost';
+my $amqp_port     = 5672;
+my $amqp_user     = 'foo';
+my $amqp_pass     = 'foo';
+my $amqp_vhost    = 'graphite';
+my $amqp_exchange = 'graphite';
 
 
 sub graphite_config {
@@ -101,14 +110,28 @@ sub graphite_config {
         my $key = $item->{'key'};
         my $val = $item->{'values'}->[0];
 
-        if ( $key =~ /buffer/i ) {
+        if ( $key =~ /^buffer$/i ) {
             $buffer_size = $val;
-        } elsif ( $key =~ /prefix/i ) {
+        } elsif ( $key =~ /^prefix$/i ) {
             $prefix = $val;
-        } elsif ( $key =~ /host/i ) {
+        } elsif ( $key =~ /^host$/i ) {
             $graphite_host = $val;
-        } elsif ( $key =~ /port/i ) {
+        } elsif ( $key =~ /^port$/i ) {
             $graphite_port = $val;
+        } elsif ( $key =~ /^useamqp$/i ) {
+            $use_amqp = $val;
+        } elsif ( $key =~ /^amqphost$/i ) {
+            $amqp_host = $val;
+        } elsif ( $key =~ /^amqpport$/i ) {
+            $amqp_port = $val;
+        } elsif ( $key =~ /^amqpuser$/i ) {
+            $amqp_user = $val;
+        } elsif ( $key =~ /^amqppassword$/i ) {
+            $amqp_pass = $val;
+        } elsif ( $key =~ /^amqpvhost$/i ) {
+            $amqp_vhost = $val;
+        } elsif ( $key =~ /^amqpexchange$/i ) {
+            $amqp_exchange = $val;
         }
     }
 
@@ -158,6 +181,14 @@ sub graphite_write {
 }
 
 sub send_to_graphite {
+    if ($use_amqp) {
+        return send_to_graphite_amqp();
+    } else {
+        return send_to_graphite_tcp();
+    }
+}
+
+sub send_to_graphite_tcp {
      return 0 if length($buff) == 0;
      my $sock = IO::Socket::INET->new(PeerAddr => $graphite_host,
                                       PeerPort => $graphite_port,
@@ -172,6 +203,42 @@ sub send_to_graphite {
      close($sock);
      $buff = '';
      return 1;
+}
+
+sub send_to_graphite_amqp {
+    return 0 if length($buff) == 0;
+
+    my $mq = Net::RabbitMQ->new();
+    my @stats = split('\n', $buff);
+
+    eval {
+        $mq->connect($amqp_host, { user     => $amqp_user,
+                                   password => $amqp_pass,
+                                   port     => $amqp_port,
+                                   vhost    => $amqp_vhost,
+                                   timeout  => $amqp_timeout });
+    } or do {
+        plugin_log(LOG_ERR, "Graphite.pm: failed to connect to broker at " .
+                            "$amqp_host:$amqp_port - vhost: $amqp_vhost : $@");
+        return 0;
+    };
+
+    eval {
+        $mq->channel_open(1);
+
+        foreach my $stat (@stats) {
+            plugin_log(LOG_DEBUG, "Graphite.pm: Publishing (AMQP): " . $stat);
+            $mq->publish(1, 'graphite', $stat, { exchange => $amqp_exchange });
+        }
+    } or do {
+        plugin_log(LOG_ERR, "Graphite.pm: failed to publish to AMQP : $@");
+        return 0;
+    };
+
+    $mq->disconnect();
+    $buff = '';
+
+    return 1;
 }
 
 sub graphite_flush {
