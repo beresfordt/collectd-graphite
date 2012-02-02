@@ -237,6 +237,8 @@ sub send_to_graphite_amqp {
                                    port     => $amqp_port,
                                    vhost    => $amqp_vhost,
                                    timeout  => $amqp_timeout });
+
+        1;
     } or do {
         plugin_log(LOG_ERR, "Graphite.pm: failed to connect to broker at " .
                             "$amqp_host:$amqp_port - vhost: $amqp_vhost : $@");
@@ -250,6 +252,8 @@ sub send_to_graphite_amqp {
             plugin_log(LOG_DEBUG, "Graphite.pm: Publishing (AMQP): " . $stat);
             $mq->publish(1, 'graphite', $stat, { exchange => $amqp_exchange });
         }
+
+        1;
     } or do {
         plugin_log(LOG_ERR, "Graphite.pm: failed to publish to AMQP : $@");
         return 0;
