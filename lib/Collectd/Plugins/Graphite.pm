@@ -42,6 +42,26 @@ In your collectd config:
     	  Port   "2003"
     	</Plugin>
     </Plugin>
+
+Or if you want to use AMQP:
+
+    <Plugin "perl">
+      BaseName "Collectd::Plugins"
+      LoadPlugin "Graphite"
+
+        <Plugin "Graphite">
+          UseAMQP       true
+          AMQPHost      "localhost"
+          AMQPVHost     "/"
+          AMQPUser      "graphite"
+          AMQPPassword  "graphite"
+          AMQPExchange  "graphite"
+        </Plugin>
+    </Plugin>
+
+Note that it is assumed you have AMQP_METRIC_NAME_IN_BODY set
+to true in your Carbon configuration.
+
     
 =head1 AUTHOR
 
