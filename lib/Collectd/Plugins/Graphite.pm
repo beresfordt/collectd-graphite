@@ -221,6 +221,7 @@ sub send_to_graphite_tcp {
     unless ($sock) {
         plugin_log(LOG_ERR, "Graphite.pm: failed to connect to " .
                             "$graphite_host:$graphite_port : $!");
+        $buff = '';
         return 0;
     }
     print $sock $buff;
@@ -246,6 +247,7 @@ sub send_to_graphite_amqp {
     } or do {
         plugin_log(LOG_ERR, "Graphite.pm: failed to connect to broker at " .
                             "$amqp_host:$amqp_port - vhost: $amqp_vhost : $@");
+        $buff = '';
         return 0;
     };
 
@@ -260,18 +262,23 @@ sub send_to_graphite_amqp {
         1;
     } or do {
         plugin_log(LOG_ERR, "Graphite.pm: failed to publish to AMQP : $@");
+        $buff = '';
         return 0;
     };
 
-    $mq->disconnect();
-    $buff = '';
+    eval {
+        $mq->disconnect();
+        1;
+    } or do {
+        plugin_log(LOG_ERR, "Graphite.pm: error closing AMQP connection : $@");
+    };
 
+    $buff = '';
     return 1;
 }
 
 sub graphite_flush {
-    send_to_graphite();
-    return 1;
+    return send_to_graphite();
 }
 
 plugin_register (TYPE_CONFIG, "Graphite", "graphite_config");
