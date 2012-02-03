@@ -113,6 +113,7 @@ my $amqp_timeout  = 10;
 my $buffer_size   = 8192;
 my $prefix        = 'collectd';
 my $host_bucket   = 'collectd';
+my $reverse_host  = 0;
 my $graphite_host = 'localhost';
 my $graphite_port = 2003;
 my $use_amqp      = 0;
@@ -137,6 +138,8 @@ sub graphite_config {
             $prefix = $val;
         } elsif ( $key =~ /^hostbucket$/i ) {
             $host_bucket = $val;
+        } elsif ( $key =~ /^reversehost$/i ) {
+            $reverse_host = $val;
         } elsif ( $key =~ /^host$/i ) {
             $graphite_host = $val;
         } elsif ( $key =~ /^port$/i ) {
@@ -165,7 +168,11 @@ sub graphite_write {
     my ($type, $ds, $vl) = @_;
 
     my $host = $vl->{'host'};
-    $host =~ s/\./_/g;
+    if ( $reverse_host ) {
+        $host = join('.', reverse(split('\.', $host)));
+    } else {
+        $host =~ s/\./_/g;
+    }
 
     my $plugin_str = $vl->{'plugin'};
     my $type_str   = $vl->{'type'};
