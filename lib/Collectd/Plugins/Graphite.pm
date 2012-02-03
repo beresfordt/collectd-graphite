@@ -213,7 +213,7 @@ sub send_to_graphite {
 }
 
 sub send_to_graphite_tcp {
-    return 0 if length($buff) == 0;
+    return 1 if length($buff) == 0;
     my $sock = IO::Socket::INET->new(PeerAddr => $graphite_host,
                                      PeerPort => $graphite_port,
                                      Proto    => 'tcp',
@@ -231,7 +231,7 @@ sub send_to_graphite_tcp {
 }
 
 sub send_to_graphite_amqp {
-    return 0 if length($buff) == 0;
+    return 1 if length($buff) == 0;
 
     my $mq = Net::RabbitMQ->new();
     my @stats = split('\n', $buff);
