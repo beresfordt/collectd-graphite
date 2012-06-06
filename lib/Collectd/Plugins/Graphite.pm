@@ -3,6 +3,9 @@ package Collectd::Plugins::Graphite;
 use strict;
 use warnings;
 
+use threads;
+use threads::shared;
+
 use IO::Socket;
 use Net::RabbitMQ;
 
@@ -109,6 +112,11 @@ my $buff = '';
 my $sock_timeout  = 10;
 my $amqp_timeout  = 10;
 
+# The hash of previous data points, needed for calculating values
+# for derive and counter data types, must be shared between threads.
+# Call lock(%prev_data_points) before using it.
+my %prev_data_points :shared;
+
 # config vars.  These can be overridden in collectd.conf
 my $buffer_size   = 8192;
 my $prefix        = 'collectd';
@@ -185,21 +193,88 @@ sub graphite_write {
     }
     
     for (my $i = 0; $i < scalar (@$ds); ++$i) {
+        lock(%prev_data_points);
+
+        my $ds_type   = $ds->[$i]->{'type'};
+        my $ds_name   = $ds->[$i]->{'name'};
+        my $ds_min    = $ds->[$i]->{'min'};
+        my $ds_max    = $ds->[$i]->{'max'};
+
+        my $interval  = $vl->{'interval'};
+        my $timestamp = $vl->{'time'};
+        my $value     = $vl->{'values'}->[$i];
+
+        my $pdp_key = sprintf "%s.%s.%s",
+            $plugin_str,
+            $type_str,
+            $ds_name;
+
         my $graphite_path = sprintf "%s.%s.%s.%s.%s.%s",
             $prefix,
             $host,
             $host_bucket,
             $plugin_str,
             $type_str,
-            $ds->[$i]->{'name'};
-            
+            $ds_name;
+
+
+        # Process the data point appropriately based on the type
+        # specified in the types.db file. This is meant to mimic the
+        # behavior of RRD as closely as possible. We take the
+        # derivative for the COUNTER and DERIVE types (with wrap
+        # detection in the case of COUNTER), divide ABSOLUTE values by
+        # the interval, and pass GAUGE values through unmodified. As
+        # with RRD, the min and max values always apply to the
+        # processed data points, not raw values.
+        if ( $ds_type == Collectd::DS_TYPE_COUNTER ||
+             $ds_type == Collectd::DS_TYPE_DERIVE ) {
+
+            if ( defined $prev_data_points{$pdp_key} ) {
+                my $diff = $value - $prev_data_points{$pdp_key};
+
+                # Simple overflow detection for 32 or 64 bit counters.
+                if ( $ds_type == Collectd::DS_TYPE_COUNTER ) {
+                    if ( $diff < 0 ) {
+                        $diff += 4294967296; # 2^32
+                    }
+
+                    if ( $diff < 0 ) {
+                        $diff += 18446744069414584320; # 2^64 - 2^32
+                    }
+                }
+
+                $prev_data_points{$pdp_key} = $value;
+                $value = $diff / $interval;
+            } else {
+                # We don't have a previous data point, so we can't do
+                # anything meaningful for DERIVE or COUNTER types. We'll
+                # just store the current point and move on.
+                $prev_data_points{$pdp_key} = $value;
+                next;
+            }
+        } elsif ( $ds_type == Collectd::DS_TYPE_ABSOLUTE ) {
+            # Absolute data types are meant to be reset upon being read,
+            # so there is no need to take the difference from a previous
+            # point, but they are still rates and must be divided by the
+            # interval.
+            $value = $value / $interval;
+        }
+
+        if ( (defined $ds_min && ( $value < $ds_min )) ||
+             (defined $ds_max && ( $value > $ds_max )) ) {
+            # The value is outside of the range specified
+            # in types.db for this metric. Skip this point.
+            plugin_log(LOG_ERR, "$graphite_path - out of range: $value");
+            next;
+        }
+
         # convert any spaces that may have snuck in
         $graphite_path =~ s/\s+/_/g;
-      
+
         $buff .= sprintf  "%s %s %d\n",
             $graphite_path,
-            $vl->{'values'}->[$i],
-            $vl->{'time'};
+            $value,
+            $timestamp;
     }
 
     # This is a best effort.  If sending to graphite fails, we
