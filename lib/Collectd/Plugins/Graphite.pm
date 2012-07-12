@@ -7,7 +7,14 @@ use threads;
 use threads::shared;
 
 use IO::Socket;
-use Net::RabbitMQ;
+use Try::Tiny;
+my $rMQAvailable = try{
+    require Net::RabbitMQ;
+    return 1;
+}
+catch{
+    return 0;
+};
 
 use Collectd qw( :all );
 
@@ -318,22 +325,24 @@ sub send_to_graphite_amqp {
     my $mq = Net::RabbitMQ->new();
     my @stats = split('\n', $buff);
 
-    eval {
+    my $connect = try {
         $mq->connect($amqp_host, { user     => $amqp_user,
                                    password => $amqp_pass,
                                    port     => $amqp_port,
                                    vhost    => $amqp_vhost,
                                    timeout  => $amqp_timeout });
 
-        1;
-    } or do {
+        return 1;
+    }
+    catch {
         plugin_log(LOG_ERR, "Graphite.pm: failed to connect to broker at " .
-                            "$amqp_host:$amqp_port - vhost: $amqp_vhost : $@");
+                            "$amqp_host:$amqp_port - vhost: $amqp_vhost : $_");
         $buff = '';
         return 0;
     };
+    return 0 unless $connect ;
 
-    eval {
+    my $publish = try {
         $mq->channel_open(1);
 
         foreach my $stat (@stats) {
@@ -341,18 +350,20 @@ sub send_to_graphite_amqp {
             $mq->publish(1, 'graphite', $stat, { exchange => $amqp_exchange });
         }
 
-        1;
-    } or do {
-        plugin_log(LOG_ERR, "Graphite.pm: failed to publish to AMQP : $@");
+        return 1;
+    }
+    catch {
+        plugin_log(LOG_ERR, "Graphite.pm: failed to publish to AMQP : $_");
         $buff = '';
         return 0;
     };
+    return 0 unless $publish ;
 
-    eval {
+    try {
         $mq->disconnect();
-        1;
-    } or do {
-        plugin_log(LOG_ERR, "Graphite.pm: error closing AMQP connection : $@");
+    }
+    catch {
+        plugin_log(LOG_ERR, "Graphite.pm: error closing AMQP connection : $_");
     };
 
     $buff = '';
@@ -363,8 +374,22 @@ sub graphite_flush {
     return send_to_graphite();
 }
 
+sub graphite_init {
+
+    # if ampq is requested, but module not available return 0
+    if ( ($use_amqp) and ($rMQAvailable == 0) ) {
+        plugin_log(LOG_ERR, 'Graphite.pm: amqp use requested, but Net::RabbitMQ not available');
+        return 0;
+    }
+    else{
+        plugin_log(LOG_INFO, 'Graphite.pm: loaded successfully');
+    }
+    return 1;
+}
+
 plugin_register (TYPE_CONFIG, "Graphite", "graphite_config");
 plugin_register (TYPE_WRITE, "Graphite", "graphite_write");
 plugin_register (TYPE_FLUSH, "Graphite", "graphite_flush");
+plugin_register (TYPE_INIT, "Graphite", "graphite_init");
 
 1; # End of Collectd::Plugins::Graphite
